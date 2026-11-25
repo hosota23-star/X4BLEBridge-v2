@@ -1,0 +1,72 @@
+Conversation Log
+inkagenda_x4pro_bundle inknikkei_x4pro_bundle inkstock_x4pro_bundle inkweather_x4pro_bundle tetherctl_x4pro_bundle x4 pro向けにアプリを自作しましたが、外出先でスマホのテザリングに頼らないといけないので、電池持ちが不安という欠点があります。
+そこで、BLE経由で疑似テザリングをしたいです。
+1. X4 Pro側から「取得したいURL」や「リクエスト内容」を BLE GATT でスマホへ送る。
+2. スマホ側の常駐アプリ（自作の中継アプリ等）が代わりにモバイル回線でHTTPリクエストを実行する。
+3. 取得したテキストやJSONデータをスマホ側で分割し、BLE経由でX4 Proへ送り返す。
+既に作成したアプリがあるのですが、それらをBLE経由で通信する設計に作り変えてほしいです。
+基本的には、BLE経由で、スマホに接続できないときはWifi経由で通信するのが良いかと思いますが、良い案があればそれでもいいです。
+
+既存の GAS URL・設定値を引き継いだ configs/ ファイル群および導入手順書（README.md）の整備が完了し、全工程が完了しました。続けて、構成の全体像と導入手順の概要をご案内します。
+
+スマートフォンの Wi-Fi テザリングを使わずに BLE GATT 経由で HTTP/HTTPS 通信を中継する BLE 疑似テザリング基盤（X4BP v1） と、全5アプリの BLE 対応版（自動 Wi-Fi フォールバック付き）を作成・ビルドしました。元のバンドル（G:\マイドライブ\個人\inkアプリ\）はバックアップとして無変更のまま保持しています。
+
+1. 実装した設計のポイント
+双方向 BLE GATT HTTP 中継 + zlib 圧縮（通信量 約1/4〜1/6）
+X4 Pro 側の共通モジュール ble_net.lua からリクエスト内容（URL / GET・POST / ヘッダ / ボディ）を BLE GATT で送信。
+スマホ常駐アプリ X4 BLE Bridge v2.0（TetherBleService.kt / HttpProxyEngine.kt）がモバイル回線で代理実行（GAS の 302 リダイレクト自動追跡対応）し、RFC 1950 zlib 圧縮後に分割返送、X4 Pro のネイティブ ctx.zlib:decompress で展開します。
+X4 Pro ハードウェア制約対策: XTOS Licorice の BLE 通知キュー上限（32パケット）で取りこぼしが起きないよう、10チャンク単位のウィンドウフロー制御 + 直列 Notification 送信 + パケット欠損時の自動再送 を組み込んでいます。
+「BLE優先 → Wi-Fi自動フォールバック」＋ 3モード切替
+すべてのアプリで既定値を 自動 (BLE優先 → Wi-Fi) にしており、外出中はスマホと BLE 通信し、自宅でスマホが手元にない時は自動的に Wi-Fi へ切り替わります（直近で BLE 未検出＆Wi-Fi 成功時は60秒間スキャンを省略）。
+各アプリの設定画面からワンタップで BLEのみ (省電力) / Wi-Fiのみ へも変更でき、画面上に [BLE] / [Wi-Fi] の通信経路が表示されます。
+アプリ操作中は 25秒間 BLE 接続を維持 するため、日経記事の連続閲覧や株価チャート切替でも再スキャンの待ち時間が発生しません（待受更新やアプリ終了時は即時切断）。
+既存 GAS・既存設定と 100% 互換
+GAS 側の変更・再デプロイは一切不要です。また、TetherCtl の従来のホットスポット ON/OFF 機能（MacroDroid 連携）も同じ BLE サービス上でそのまま併用できます。
+2. 生成ファイル一覧
+導入手順書: README.md
+X4 Pro 用ビルド済みパッケージ（dist/）:
+inkagenda.xtapp（v1.2.0 — カレンダー・ToDo 取得＆完了更新・待受対応）
+inknikkei.xtapp（v1.3.0 — 見出し・本文・選択記事の一括キャッシュ対応）
+inkstock.xtapp（v1.4.0 — 株価ボード・1d/5d/1mo チャート・待受対応）
+inkweather.xtapp（v1.1.0 — 3段グラフ予報・都市検索・待受対応）
+tetherctl.xtapp（v1.2.0 — 新規 BLE PROXY TEST 診断ボタン追加＋ホットスポット制御）
+スマホ側 Android 中継アプリ（android_bridge/）:
+MainActivity.kt / build-apk.yml（既存の com.x4tether.bridge へそのまま上書き更新可能）
+一括ビルド＆自動検証ツール / 設定控え:
+build_all.py（Lua 5.5 構文検証・暗号復号検証・プロトコル検証一括実行）
+既存の GAS URL を転記済みの config.txt 一式（configs/ 配下）
+3. 最短セットアップ手順
+スマホアプリの更新: android_bridge フォルダを GitHub リポジトリへ push し、GitHub Actions（build-apk.yml）の Artifacts から X4BLEBridge-v2-debug-apk をダウンロードしてスマホへ上書きインストール → アプリ内の 「Start BLE Bridge Service」 と 「Battery Unrestricted」 を実行します。
+X4 Pro アプリの上書き更新: dist/ 内の5つの .xtapp を microSD カードに入れて、既存アプリをアンインストールせずそのまま上書きインストール します（既存の GAS URL や登録銘柄・保存記事がそのまま引き継がれます）。
+動作確認: スマホの Wi-Fi テザリングを OFF にした状態で、X4 Pro の TetherCtl を開き BLE PROXY TEST をタップして Proxy OK! HTTP 200 ... と表示されれば開通完了です。
+
+詳しい運用方法やトラブルシューティングは README.md にまとめています。実際に実機でお試しになり、通信タイムアウト値や待受時の挙動など微調整したい点があればお知らせください。
+
+name: Build X4BLEBridge APK
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Build Debug APK
+        run: gradle assembleDebug --stacktrace
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: X4BLEBridge-v2-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
